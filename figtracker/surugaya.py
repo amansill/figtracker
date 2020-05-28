@@ -5,16 +5,32 @@ from bs4 import BeautifulSoup
 import re
 from IPython.core.display import clear_output
 import urllib.request, urllib.error
+import time
 
 db_name = r'D://websites_db.sqlite'
-counter = None
+counter = 0
+session = requests.Session()
+adapter = requests.adapters.HTTPAdapter(
+    pool_connections=100,
+    pool_maxsize=100, max_retries=20)
+session.mount('http://', adapter)
 
 def get_single_item(url, total=1, item_type='all'):
     global counter
     price, title, img, img_blob = ['' for i in range(0,4)]
     if 'suruga-ya' in url:
-        page = requests.get(url)
+        counter = counter + 1
+        while True:
+            try:
+                page = session.get(url, timeout=15)
+                time.sleep(2)
+            except Exception as e:
+                print(e)
+                time.sleep(5)
+                continue
+            break
         if page.status_code == 200:
+            print('Retrieving Suru {} data {} / {}...'.format(item_type, counter, total))
             soup = BeautifulSoup(page.content, 'html.parser')
 
             divs = soup.find_all(class_="text-red text-bold mgnL10 ")
@@ -22,7 +38,6 @@ def get_single_item(url, total=1, item_type='all'):
                 match = re.search(r'(\d+\,?\d+)', divs[0].get_text())
                 if match:
                     price = match.group().replace(",", "")
-            price = int(price or 0)
 
             divs = soup.find(id="zoom1")
             if divs is not None:
@@ -34,9 +49,7 @@ def get_single_item(url, total=1, item_type='all'):
                 title = divs.get_text().split("<BR>")[0]
                 title = title.replace("&lt;&lt;", "<<").replace("&gt;&gt;", ">>").replace('\n','').strip()
 
-    suru_item = {'current_price': price, 'image_url': img, 'image_blob': img_blob, 'title': title}
-    counter = counter + 1
-    print('Retrieving Suru {} data {} / {}...'.format(item_type,counter,total))
+    suru_item = {'current_price': int(price or 0), 'image_url': img, 'image_blob': img_blob, 'title': title}
     clear_output(wait=True)
     if item_type == 'all':
         return suru_item
@@ -66,6 +79,7 @@ def get_all_prices():
         del df_items['current_price_new']
         df_items_report['current_price'] = df_items_report['current_price_new']
         del df_items_report['current_price_new']
+        del df_items_report['image_blob']
         df_items.set_index('url', inplace=True)
         df_items.to_sql('surugaya', con, if_exists='replace')
     else:
@@ -110,24 +124,19 @@ def new_record(url, total=1):
 
 
 if __name__ == '__main__':
-    df_items_report = get_all_prices()
+    #df_items_report = get_all_prices()
     #df = update_blobs()
-    #df_items_report = pd.DataFrame()
+    df_items_report = pd.DataFrame()
     if df_items_report.shape[0] > 0:
         print(df_items_report[df_items_report['price_check']=='Y'])
         print(df_items_report[df_items_report['back_in_stock'] == 'Y'])
 
-    '''
+    #https://www.suruga-ya.jp/product/detail/601803010
+    #https://www.suruga-ya.jp/product/detail/ZHORE103420
     con = sa.create_engine(r'sqlite:///{}'.format(db_name)).connect()
-    df_new = new_record('https://www.suruga-ya.jp/product/detail/608430302')
-    df_new.to_sql('surugaya', con, if_exists='append')
-    df_new = new_record('https://www.suruga-ya.jp/product/detail/608582737')
-    df_new.to_sql('surugaya', con, if_exists='append')
-    df_new = new_record('https://www.suruga-ya.jp/product/detail/608406460')
-    df_new.to_sql('surugaya', con, if_exists='append')
-    df_new = new_record('https://www.suruga-ya.jp/product/detail/602141069')
+    df_new = new_record('https://www.suruga-ya.jp/product/detail/601803010')
     df_new.to_sql('surugaya', con, if_exists='append')
     con.close()
-    '''
+
 
 
