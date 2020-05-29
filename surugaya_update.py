@@ -6,6 +6,7 @@ import re
 from IPython.core.display import clear_output
 import urllib.request, urllib.error
 import time
+from surugaya import Surugaya
 
 db_name = r'D://websites_db.sqlite'
 counter = 0
@@ -14,6 +15,7 @@ adapter = requests.adapters.HTTPAdapter(
     pool_connections=100,
     pool_maxsize=100, max_retries=20)
 session.mount('http://', adapter)
+
 
 def get_single_item(url, total=1, item_type='all'):
     global counter
@@ -50,11 +52,13 @@ def get_single_item(url, total=1, item_type='all'):
                 title = title.replace("&lt;&lt;", "<<").replace("&gt;&gt;", ">>").replace('\n','').strip()
 
     suru_item = {'current_price': int(price or 0), 'image_url': img, 'image_blob': img_blob, 'title': title}
+    # suru_item = Surugaya(url=url, current_price=int(price or 0), image_url=img, image_blob=img_blob, title=title)
     clear_output(wait=True)
     if item_type == 'all':
         return suru_item
     else:
         return suru_item[item_type]
+    # return suru_item
 
 
 def get_all_prices():
@@ -67,6 +71,7 @@ def get_all_prices():
 
     if total > 0:
         df_items['current_price_new'] = df_items['url'].map(lambda x: get_single_item(x, total=total, item_type='current_price'))
+        # df_items['current_price_new'] = df_items['url'].map(lambda x: get_single_item(x, total=total).current_price)
         df_items['last_price'] = df_items.apply(lambda x: x['current_price'] if (x['last_price']==0) and (x['current_price']>0) else x['last_price'], axis=1)
         df_items['last_price'] = df_items['last_price'].astype(int)
         df_items['current_price'] = df_items['current_price'].astype(int)
@@ -88,39 +93,23 @@ def get_all_prices():
     return df_items_report
 
 
-def update_blobs():
-    global counter
-    con = sa.create_engine(r'sqlite:///{}'.format(db_name)).connect()
-    df_items = pd.read_sql("select * from surugaya", con)
-    total = df_items.shape[0]
-    counter = 0
-
-    if total > 0:
-        for i in range(0, total):
-            df = new_record(df_items.iloc[i]['url'], total=total)
-            df_items.at[i,'current_price'] = df.iloc[0]['current_price']
-            df_items.at[i,'image_url'] = df.iloc[0]['image_url']
-            df_items.at[i,'image_blob'] = df.iloc[0]['image_blob']
-
-        df_items['last_price'] = df_items.apply(lambda x: x['current_price'] if (x['last_price']==0) and (x['current_price']>0) else x['last_price'], axis=1)
-        df_items['last_price'] = df_items['last_price'].astype(int)
-        df_items['current_price'] = df_items['current_price'].astype(int)
-        df_items.set_index('url', inplace=True)
-        df_items.to_sql('surugaya', con, if_exists='replace')
-    else:
-        df_items = pd.DataFrame()
-
-    con.close()
-    return df_items
-
-
-def new_record(url, total=1):
+def create_record(url, total=1):
     df_data = get_single_item(url, total=total)
-    df_data['last_price'] = df_data['current_price']
+    # df = pd.DataFrame(suru.as_dict())
     df = pd.DataFrame(columns=['url', 'title', 'image_url', 'image_blob', 'last_price', 'current_price'],
                       data=[[url, df_data['title'],  df_data['image_url'],  df_data['image_blob'],  df_data['last_price'],  df_data['current_price']]])
     df.set_index('url', inplace=True)
-    return df
+    df['last_price'] = df['current_price']
+    con = sa.create_engine(r'sqlite:///{}'.format(db_name)).connect()
+    df.to_sql('surugaya', con, if_exists='append')
+    con.close()
+    return
+
+
+def delete_record(url):
+    con = sa.create_engine(r'sqlite:///{}'.format(db_name)).connect()
+    con.execute("delete from surugaya where url = {}".format(url))
+    return
 
 
 if __name__ == '__main__':
@@ -131,12 +120,8 @@ if __name__ == '__main__':
         print(df_items_report[df_items_report['price_check']=='Y'])
         print(df_items_report[df_items_report['back_in_stock'] == 'Y'])
 
-    #https://www.suruga-ya.jp/product/detail/601803010
-    #https://www.suruga-ya.jp/product/detail/ZHORE103420
-    con = sa.create_engine(r'sqlite:///{}'.format(db_name)).connect()
-    df_new = new_record('https://www.suruga-ya.jp/product/detail/601803010')
-    df_new.to_sql('surugaya', con, if_exists='append')
-    con.close()
+    create_record('https://www.suruga-ya.jp/product/detail/601803010')
+
 
 
 
