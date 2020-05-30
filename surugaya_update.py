@@ -3,8 +3,6 @@ import sqlalchemy as sa
 import requests
 from bs4 import BeautifulSoup
 import re
-from IPython.core.display import clear_output
-import urllib.request, urllib.error
 import time
 from surugaya import Surugaya
 
@@ -19,7 +17,7 @@ session.mount('http://', adapter)
 
 def get_single_item(url, total=1, item_type='all'):
     global counter
-    price, title, img, img_blob = ['' for i in range(0,4)]
+    price, title = ['', '']
     if 'suruga-ya' in url:
         counter = counter + 1
         while True:
@@ -37,28 +35,21 @@ def get_single_item(url, total=1, item_type='all'):
 
             divs = soup.find_all(class_="text-red text-bold mgnL10 ")
             if len(divs) > 0:
-                match = re.search(r'(\d+\,?\d+)', divs[0].get_text())
-                if match:
-                    price = match.group().replace(",", "")
-
-            divs = soup.find(id="zoom1")
-            if divs is not None:
-                img = divs['href']
-                img_blob = urllib.request.urlopen(img).read()
+                price = re.sub('[^0-9]', '', divs[0].get_text())
 
             divs = soup.find(id="item_title")
             if divs is not None:
                 title = divs.get_text().split("<BR>")[0]
                 title = title.replace("&lt;&lt;", "<<").replace("&gt;&gt;", ">>").replace('\n','').strip()
 
-    suru_item = {'current_price': int(price or 0), 'image_url': img, 'image_blob': img_blob, 'title': title}
-    # suru_item = Surugaya(url=url, current_price=int(price or 0), image_url=img, image_blob=img_blob, title=title)
-    clear_output(wait=True)
-    if item_type == 'all':
-        return suru_item
-    else:
-        return suru_item[item_type]
-    # return suru_item
+    suru_item = Surugaya(url=url, current_price=int(price or 0), title=title)
+    return suru_item
+
+
+def get_all_data():
+    con = sa.create_engine(r'sqlite:///{}'.format(db_name)).connect()
+    df_items = pd.read_sql("select * from surugaya", con)
+    return df_items
 
 
 def get_all_prices():
@@ -70,8 +61,7 @@ def get_all_prices():
     counter = 0
 
     if total > 0:
-        df_items['current_price_new'] = df_items['url'].map(lambda x: get_single_item(x, total=total, item_type='current_price'))
-        # df_items['current_price_new'] = df_items['url'].map(lambda x: get_single_item(x, total=total).current_price)
+        df_items['current_price_new'] = df_items['url'].map(lambda x: get_single_item(x, total=total).current_price)
         df_items['last_price'] = df_items.apply(lambda x: x['current_price'] if (x['last_price']==0) and (x['current_price']>0) else x['last_price'], axis=1)
         df_items['last_price'] = df_items['last_price'].astype(int)
         df_items['current_price'] = df_items['current_price'].astype(int)
@@ -94,33 +84,47 @@ def get_all_prices():
 
 
 def create_record(url, total=1):
-    df_data = get_single_item(url, total=total)
-    # df = pd.DataFrame(suru.as_dict())
-    df = pd.DataFrame(columns=['url', 'title', 'image_url', 'image_blob', 'last_price', 'current_price'],
-                      data=[[url, df_data['title'],  df_data['image_url'],  df_data['image_blob'],  df_data['last_price'],  df_data['current_price']]])
-    df.set_index('url', inplace=True)
-    df['last_price'] = df['current_price']
+    suru_item = get_single_item(url, total=total)
+    suru_item.image_blob = suru_item.get_image_blob(suru_item.image_url)
+    df = pd.DataFrame(suru_item.as_dict())
+    df.set_index('product_code', inplace=True)
     con = sa.create_engine(r'sqlite:///{}'.format(db_name)).connect()
     df.to_sql('surugaya', con, if_exists='append')
     con.close()
     return
 
 
-def delete_record(url):
+def delete_record(str_input):
+    r"""Sends an OPTIONS request.
+
+        :param url: URL for the new :class:`Request` object.
+        :param \*\*kwargs: Optional arguments that ``request`` takes.
+        :return: :class:`Response <Response>` object
+        :rtype: requests.Response
+        """
     con = sa.create_engine(r'sqlite:///{}'.format(db_name)).connect()
-    con.execute("delete from surugaya where url = {}".format(url))
+    column = 'url' if 'http' in str_input else 'product_code'
+    con.execute("delete from surugaya where {} = '{}'".format(column, str_input))
     return
 
 
 if __name__ == '__main__':
     #df_items_report = get_all_prices()
-    #df = update_blobs()
     df_items_report = pd.DataFrame()
     if df_items_report.shape[0] > 0:
         print(df_items_report[df_items_report['price_check']=='Y'])
         print(df_items_report[df_items_report['back_in_stock'] == 'Y'])
 
-    create_record('https://www.suruga-ya.jp/product/detail/601803010')
+    df = get_all_data()
+    del df['image_blob']
+    df['url'] = df['url'].map(lambda i: '<a href="' + i + '">' + i + '</a>')
+    df['image_url'] = df['image_url'].map(lambda i: '<img src="' + i + '" />')
+    pd.set_option('display.max_colwidth', -1)
+    df = df.to_html(index=False, escape=False)
+    df = df.replace("<<", "&lt;&lt;").replace(">>", "&gt;&gt;")
+    print(df)
+    # create_record('https://www.suruga-ya.jp/product/detail/608571216')
+    # delete_record('https://www.suruga-ya.jp/product/detail/608290335001')
 
 
 
